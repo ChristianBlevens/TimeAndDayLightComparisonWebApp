@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daylight & Time Zone Comparison</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+            margin: 0;
+        }
+        
+        #input-container {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        #location-input {
+            padding: 10px 15px;
+            font-size: 16px;
+            border: 2px solid #444;
+            border-radius: 5px;
+            background-color: #2a2a2a;
+            color: #fff;
+            width: 300px;
+            margin-right: 10px;
+        }
+        
+        #add-location {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4a7c7e;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        #add-location:hover:not(:disabled) {
+            background-color: #5a8c8e;
+        }
+        
+        #add-location:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        
+        .location-bar {
+            margin-bottom: 20px;
+            background-color: #2a2a2a;
+            border-radius: 10px;
+            padding: 15px;
+            position: relative;
+        }
+        
+        .location-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .time-bar {
+            height: 60px;
+            position: relative;
+            border-radius: 5px;
+            overflow: visible;
+            background: linear-gradient(to right, #1a2a4a 0%, #1a2a4a 100%);
+        }
+        
+        .current-time-marker {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background-color: #ff0000;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            box-shadow: 0 0 4px rgba(255, 0, 0, 0.8);
+        }
+        
+        .current-time-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 11;
+            border: 1px solid #fff;
+        }
+        
+        .hour-markers {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            pointer-events: none;
+        }
+        
+        .hour-marker {
+            position: absolute;
+            font-size: 11px;
+            color: #fff;
+            font-weight: bold;
+            text-align: center;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 2px 4px;
+            border-radius: 4px;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+            transition: top 0.3s ease;
+        }
+        
+        .hour-lines {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            pointer-events: none;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        
+        .hour-line {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .error {
+            color: #ff6b6b;
+            text-align: center;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="input-container">
+        <input type="text" id="location-input" placeholder="Enter a location (e.g., New York, Tokyo)" />
+        <button id="add-location">Add Location</button>
+    </div>
+    <div id="locations-container"></div>
+    <div id="error-message" class="error"></div>
+
+    <script>
+        const locationsContainer = document.getElementById('locations-container');
+        const locationInput = document.getElementById('location-input');
+        const addButton = document.getElementById('add-location');
+        const errorMessage = document.getElementById('error-message');
+        
+        // Store locations data
+        const locations = [];
+        let isProcessing = false;
+        
+        // Add location on button click
+        addButton.addEventListener('click', addLocation);
+        locationInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addLocation();
+        });
+        
+        async function addLocation() {
+            const location = locationInput.value.trim();
+            if (!location || isProcessing) return;
+            
+            // Check if location already exists
+            const locationExists = locations.some(loc => 
+                loc.searchTerm.toLowerCase() === location.toLowerCase()
+            );
+            
+            if (locationExists) {
+                errorMessage.textContent = 'This location has already been added';
+                return;
+            }
+            
+            // Set processing state
+            isProcessing = true;
+            addButton.disabled = true;
+            addButton.textContent = 'Adding...';
+            locationInput.disabled = true;
+            errorMessage.textContent = '';
+            
+            try {
+                // Get geocoding data
+                const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`);
+                const geoData = await geoResponse.json();
+                
+                if (!geoData.results || geoData.results.length === 0) {
+                    throw new Error('Location not found');
+                }
+                
+                const { latitude, longitude, name, country, timezone } = geoData.results[0];
+                
+                // Get sunrise/sunset data
+                const today = new Date().toISOString().split('T')[0];
+                const sunResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&daily=sunrise,sunset&timezone=${timezone}&start_date=${today}&end_date=${today}`);
+                const sunData = await sunResponse.json();
+                
+                const locationData = {
+                    name: `${name}, ${country}`,
+                    searchTerm: location,
+                    timezone: timezone,
+                    sunrise: new Date(sunData.daily.sunrise[0]),
+                    sunset: new Date(sunData.daily.sunset[0]),
+                    latitude: latitude,
+                    longitude: longitude
+                };
+                
+                locations.push(locationData);
+                createLocationBar(locationData);
+                locationInput.value = '';
+                
+                // Update all bars every minute
+                if (locations.length === 1) {
+                    setInterval(updateAllBars, 60000);
+                }
+                
+            } catch (error) {
+                errorMessage.textContent = error.message || 'Error adding location';
+            } finally {
+                // Reset processing state
+                isProcessing = false;
+                addButton.disabled = false;
+                addButton.textContent = 'Add Location';
+                locationInput.disabled = false;
+                locationInput.focus();
+            }
+        }
+        
+        function createLocationBar(locationData) {
+            const bar = document.createElement('div');
+            bar.className = 'location-bar';
+            bar.innerHTML = `
+                <div class="location-title">${locationData.name}</div>
+                <div class="time-bar" id="bar-${locations.length - 1}">
+                    <div class="hour-lines"></div>
+                    <div class="current-time-marker"></div>
+                    <div class="current-time-label"></div>
+                    <div class="hour-markers"></div>
+                </div>
+            `;
+            locationsContainer.appendChild(bar);
+            updateBar(locations.length - 1);
+        }
+        
+        function updateBar(index) {
+            const locationData = locations[index];
+            const bar = document.getElementById(`bar-${index}`);
+            const currentTimeLabel = bar.querySelector('.current-time-label');
+            const hourMarkersContainer = bar.querySelector('.hour-markers');
+            const hourLinesContainer = bar.querySelector('.hour-lines');
+            
+            // Get current time in location's timezone
+            const now = new Date();
+            const localTime = new Date(now.toLocaleString("en-US", {timeZone: locationData.timezone}));
+            const hours = localTime.getHours();
+            const minutes = localTime.getMinutes();
+            
+            // Update current time label
+            currentTimeLabel.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+            
+            // Create gradient for the 24-hour period
+            const gradient = createDaylightGradient(locationData, localTime);
+            bar.style.background = gradient;
+            
+            // Calculate minute offset as a fraction of an hour
+            const minuteOffset = minutes / 60;
+            
+            // Create all hour markers first
+            const markers = [];
+            hourMarkersContainer.innerHTML = '';
+            hourLinesContainer.innerHTML = '';
+            
+            for (let i = -13; i <= 13; i++) {
+                const markerHour = (hours + i + 24) % 24;
+                
+                // Position based on hour offset, shifted left by the minute fraction
+                const basePosition = ((i + 12) / 24) * 100;
+                const shiftedPosition = basePosition - (minuteOffset / 24) * 100;
+                
+                // Handle wrapping for markers near edges
+                let finalPosition = shiftedPosition;
+                let isWrapped = false;
+                
+                if (shiftedPosition < 0) {
+                    finalPosition = shiftedPosition + 100;
+                    isWrapped = true;
+                } else if (shiftedPosition > 100) {
+                    finalPosition = shiftedPosition - 100;
+                    isWrapped = true;
+                }
+                
+                // Only create markers that will be visible
+                if (finalPosition >= -2 && finalPosition <= 102) {
+                    const marker = document.createElement('div');
+                    marker.className = 'hour-marker';
+                    marker.textContent = markerHour.toString().padStart(2, '0');
+                    marker.style.left = `${finalPosition}%`;
+                    
+                    markers.push({
+                        element: marker,
+                        position: finalPosition,
+                        index: i,
+                        isWrapped: isWrapped,
+                        originalPosition: shiftedPosition
+                    });
+                }
+                
+                // Add hour line with same shift
+                if (i !== -13) {
+                    const linePosition = basePosition - (minuteOffset / 24) * 100;
+                    let lineFinalPosition = linePosition;
+                    
+                    if (linePosition < 0) {
+                        lineFinalPosition = linePosition + 100;
+                    } else if (linePosition > 100) {
+                        lineFinalPosition = linePosition - 100;
+                    }
+                    
+                    // Only add lines that are visible
+                    if (lineFinalPosition >= -1 && lineFinalPosition <= 101) {
+                        const line = document.createElement('div');
+                        line.className = 'hour-line';
+                        line.style.left = `${lineFinalPosition}%`;
+                        hourLinesContainer.appendChild(line);
+                    }
+                }
+            }
+            
+            // Apply zipper pattern to prevent overlap
+            markers.forEach((marker, idx) => {
+                hourMarkersContainer.appendChild(marker.element);
+            });
+            
+            // After all markers are added, check for overlaps
+            setTimeout(() => {
+                const markerElements = hourMarkersContainer.querySelectorAll('.hour-marker');
+                const positions = [];
+                
+                // First pass: collect all positions and widths
+                markerElements.forEach((marker, idx) => {
+                    const rect = marker.getBoundingClientRect();
+                    positions.push({
+                        element: marker,
+                        left: rect.left,
+                        right: rect.right,
+                        width: rect.width,
+                        index: idx
+                    });
+                });
+                
+                // Second pass: detect overlaps and apply zipper
+                let inOverlapChain = false;
+                positions.forEach((pos, idx) => {
+                    if (idx === 0) return;
+                    
+                    const prev = positions[idx - 1];
+                    const gap = pos.left - prev.right;
+                    
+                    // If labels overlap or are very close (less than 4px gap)
+                    if (gap < 4) {
+                        inOverlapChain = true;
+                        
+                        // Apply alternating pattern
+                        if (idx % 2 === 0) {
+                            pos.element.style.top = '35%';
+                            prev.element.style.top = '65%';
+                        } else {
+                            pos.element.style.top = '65%';
+                            prev.element.style.top = '35%';
+                        }
+                    } else if (gap > 10) {
+                        // Reset to center if there's enough space
+                        inOverlapChain = false;
+                        if (idx < positions.length - 1) {
+                            // Check if next one will overlap
+                            const next = positions[idx + 1];
+                            const nextGap = next.left - pos.right;
+                            if (nextGap > 10) {
+                                pos.element.style.top = '50%';
+                            }
+                        } else {
+                            pos.element.style.top = '50%';
+                        }
+                    }
+                });
+            }, 50); // Slightly longer delay to ensure rendering
+        }
+        
+        function createDaylightGradient(locationData, currentTime) {
+            const gradientStops = [];
+            const currentHour = currentTime.getHours();
+            
+            // Calculate sunrise/sunset hours
+            const sunriseHour = locationData.sunrise.getHours() + locationData.sunrise.getMinutes() / 60;
+            const sunsetHour = locationData.sunset.getHours() + locationData.sunset.getMinutes() / 60;
+            
+            // Solar noon (brightest point)
+            const solarNoon = (sunriseHour + sunsetHour) / 2;
+            
+            // Create gradient with many stops for smooth transitions
+            for (let i = 0; i <= 200; i++) {
+                const position = (i / 200) * 100;
+                const hourOffset = ((i / 200) - 0.5) * 24; // -12 to +12 hours from center
+                const hour = (currentHour + hourOffset + 24) % 24;
+                
+                let color;
+                if (hour >= sunriseHour - 0.5 && hour <= sunsetHour + 0.5) {
+                    // Extended daylight for smoother transitions
+                    const extendedSunrise = sunriseHour - 0.5;
+                    const extendedSunset = sunsetHour + 0.5;
+                    const dayProgress = (hour - extendedSunrise) / (extendedSunset - extendedSunrise);
+                    
+                    if (hour < sunriseHour) {
+                        // Pre-sunrise twilight
+                        const twilightProgress = (hour - extendedSunrise) / 0.5;
+                        color = interpolateColor('#2a3a5a', '#FF6B6B', twilightProgress);
+                    } else if (hour > sunsetHour) {
+                        // Post-sunset twilight
+                        const twilightProgress = (hour - sunsetHour) / 0.5;
+                        color = interpolateColor('#FF6B6B', '#2a3a5a', twilightProgress);
+                    } else {
+                        // Daytime
+                        const distanceFromNoon = Math.abs(hour - solarNoon);
+                        const maxDistance = Math.max(solarNoon - sunriseHour, sunsetHour - solarNoon);
+                        const noonProgress = 1 - (distanceFromNoon / maxDistance);
+                        
+                        if (noonProgress > 0.8) {
+                            color = interpolateColor('#FFE74C', '#FFD700', (noonProgress - 0.8) * 5);
+                        } else if (noonProgress > 0.5) {
+                            color = interpolateColor('#FFA500', '#FFE74C', (noonProgress - 0.5) * 3.33);
+                        } else {
+                            color = interpolateColor('#FF6B6B', '#FFA500', noonProgress * 2);
+                        }
+                    }
+                } else {
+                    // Nighttime
+                    const nightHours = 24 - (sunsetHour - sunriseHour);
+                    const midnightPoint = (sunsetHour + nightHours / 2) % 24;
+                    const distanceFromMidnight = Math.min(
+                        Math.abs(hour - midnightPoint),
+                        Math.abs(hour - (midnightPoint + 24)),
+                        Math.abs(hour - (midnightPoint - 24))
+                    );
+                    const nightProgress = 1 - (distanceFromMidnight / (nightHours / 2));
+                    
+                    if (nightProgress > 0.7) {
+                        color = interpolateColor('#1a2a4a', '#0a1929', (nightProgress - 0.7) * 3.33);
+                    } else if (nightProgress > 0.3) {
+                        color = interpolateColor('#2a3a5a', '#1a2a4a', (nightProgress - 0.3) * 2.5);
+                    } else {
+                        color = '#2a3a5a';
+                    }
+                }
+                
+                gradientStops.push(`${color} ${position}%`);
+            }
+            
+            return `linear-gradient(to right, ${gradientStops.join(', ')})`;
+        }
+        
+        function interpolateColor(color1, color2, factor) {
+            const c1 = hexToRgb(color1);
+            const c2 = hexToRgb(color2);
+            
+            const r = Math.round(c1.r + (c2.r - c1.r) * factor);
+            const g = Math.round(c1.g + (c2.g - c1.g) * factor);
+            const b = Math.round(c1.b + (c2.b - c1.b) * factor);
+            
+            return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+        }
+        
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            };
+        }
+        
+        function updateAllBars() {
+            locations.forEach((_, index) => updateBar(index));
+        }
+        
+        window.addEventListener('resize', () => {
+            updateAllBars();
+        });
+    </script>
+</body>
+</html>
